@@ -1,12 +1,12 @@
 import type { Plugin } from 'vite'
-import { transformSync } from '@babel/core'
+import { transformAsync, transformFromAstAsync } from '@babel/core'
 
 export default {
   name: 'vite:relay',
-  transform(src, id) {
+  async transform(src, id) {
     let code = src
     if (/.(t|j)sx?/.test(id) && src.includes('graphql`')) {
-      const out = transformSync(src, {
+      const result = await transformAsync(src, {
         plugins: [
           [
             'relay',
@@ -18,8 +18,37 @@ export default {
         code: true,
       })
 
-      if (!out?.code) throw new Error('vite-plugin-react Failed to build')
-      code = out.code
+      let count = 0
+
+      const otherResult = await transformFromAstAsync(result!.ast!, undefined, {
+        plugins: [
+          function cleanup() {
+            return {
+              visitor: {
+                ImportDeclaration(path: any) {
+                  if (
+                    path.node.source.type === 'StringLiteral' &&
+                    path.node.source.value.endsWith('.graphql')
+                  ) {
+                    path.node.source.value = path.node.source.value.replace(
+                      new RegExp('.graphql$'),
+                      '.graphql.js'
+                    )
+                  }
+                },
+                ExportDefaultDeclaration(path: any) {
+                  if (count === 1) path.remove()
+                  else count++
+                },
+              },
+            }
+          },
+        ],
+      })
+
+      if (!otherResult?.code)
+        throw new Error('vite-plugin-react Failed to build')
+      code = otherResult.code
     }
 
     return {
